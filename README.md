@@ -23,9 +23,10 @@ You still need someone or something to build the APK before it can be installed 
 1. Push this repository to GitHub.
 2. Open the repository in your iPhone browser.
 3. Go to **Actions** > **Build APK** > **Run workflow**.
-4. When the run finishes, download the `tv-caster-debug-apk` artifact.
-5. Put the APK somewhere your Google TV can download it, such as a private cloud storage link.
-6. On Google TV, use a sideloading app such as Downloader or a file manager to download and install the APK.
+4. When the run finishes, open **Releases** and download `tv-caster-debug.apk` from **Latest debug APK**. This is the direct install file.
+5. Do not send the zipped Actions artifact to the TV unless you unzip it first; Google TV cannot install the zip file.
+6. Put `tv-caster-debug.apk` somewhere your Google TV can download it, such as a private cloud storage link.
+7. On Google TV, use a sideloading app such as Downloader or a file manager to download and install the APK.
 
 If you cannot use GitHub Actions or another cloud build service, you will need access to a computer, Android phone with build tools, or someone else who can build and send you the APK.
 
@@ -41,3 +42,8 @@ If the error mentions `androidx.media3.common.MediaItem`, `androidx.media3.exopl
 Make sure you are using Chromecast with Google TV or another Android TV / Google TV device. Older cast-only Chromecast devices cannot install or open Android APKs.
 
 If the APK installs but immediately closes, rebuild and reinstall the latest version. The app now discovers the TV IP address from Android network interfaces instead of using Wi-Fi-only APIs, which avoids launch crashes on Ethernet or restricted Wi-Fi devices.
+
+
+## If Google TV does not offer Install
+
+Make sure the file on the TV ends in `.apk`. GitHub Actions artifacts download as `.zip` files, and Google TV will not install the zip. Use the **Latest debug APK** release asset named `tv-caster-debug.apk`, or unzip the `tv-caster-debug-apk` artifact first and then transfer the APK inside it.
