@@ -40,7 +40,27 @@ jobs:
         run: gradle --version
 
       - name: Build debug APK
-        run: gradle assembleDebug
+        id: build_apk
+        shell: bash
+        run: |
+          set +e
+          gradle assembleDebug --console=plain --stacktrace 2>&1 | tee build.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "## Build failed" >> "$GITHUB_STEP_SUMMARY"
+            echo "The important compiler error is usually earlier than the final stack trace. Search this log for `error:` or `What went wrong`." >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep -n -i -E "(^|[[:space:]])(error:|what went wrong|compilation failed|failed for task)" build.log | head -40 >> "$GITHUB_STEP_SUMMARY" || true
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tv-caster-build-log
+          path: build.log
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
