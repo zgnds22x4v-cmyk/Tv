@@ -6,13 +6,11 @@ TV Caster is a minimal Google TV / Android TV receiver app for Chromecast with G
 
 1. Install and open the app on Google TV.
 2. Keep the iPhone and TV on the same local network.
-3. On the iPhone, open the address shown on the TV, or create a Shortcut that requests:
+3. Scan the QR code shown on the TV with your iPhone camera.
+4. The QR code opens the TV Caster Remote web page hosted by the TV.
+5. Paste a direct video URL such as an MP4 or HLS `.m3u8` link and tap **Play on TV**.
 
-   `http://TV_IP_ADDRESS:8090/play?url=VIDEO_URL`
-
-4. Replace `VIDEO_URL` with a direct media URL such as an MP4, HLS `.m3u8`, or DASH stream URL.
-
-The app cannot extract protected streams from arbitrary iPhone apps. The iPhone must provide a direct URL that the TV can access.
+The app cannot extract protected streams from arbitrary iPhone apps. The iPhone must provide a direct URL that the TV can access. iPhone screen mirroring uses AirPlay; this app is not an AirPlay receiver, so it can play shared video links but cannot mirror your whole iPhone screen.
 
 ## Building an APK on a computer
 
@@ -30,3 +28,9 @@ You still need someone or something to build the APK before it can be installed 
 6. On Google TV, use a sideloading app such as Downloader or a file manager to download and install the APK.
 
 If you cannot use GitHub Actions or another cloud build service, you will need access to a computer, Android phone with build tools, or someone else who can build and send you the APK.
+
+## If the APK build fails
+
+The GitHub Actions workflow installs Gradle 8.7, Android SDK platform 35, and Android build tools 35.0.0 before running `gradle assembleDebug`. If the build still fails, open the failed Actions run and check the first red step. Common causes are temporary Maven download failures or GitHub Actions not being enabled for the repository.
+
+If the error mentions `androidx.media3.common.MediaItem`, `androidx.media3.exoplayer.ExoPlayer`, or `androidx.media3.ui.PlayerView`, the workflow is building an older commit. Pull or push the latest code and rerun the workflow. The current app uses Android `VideoView` plus ZXing for the QR code, not Media3/ExoPlayer.

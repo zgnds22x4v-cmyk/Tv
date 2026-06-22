@@ -20,6 +20,8 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -27,8 +29,38 @@ jobs:
       - name: Install Android platform
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
 
+      - name: Check for stale Media3 imports
+        run: |
+          if find app/src/main/java -type f -name '*.java' -print0 | xargs -0 grep -n "androidx.media3"; then
+            echo "Found stale Media3 imports. Push the latest self-contained VideoView code before building." >&2
+            exit 1
+          fi
+
+      - name: Show Gradle version
+        run: gradle --version
+
       - name: Build debug APK
-        run: gradle assembleDebug
+        id: build_apk
+        shell: bash
+        run: |
+          set +e
+          gradle assembleDebug --console=plain --stacktrace 2>&1 | tee build.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "## Build failed" >> "$GITHUB_STEP_SUMMARY"
+            echo "The important compiler error is usually earlier than the final stack trace. Search this log for `error:` or `What went wrong`." >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep -n -i -E "(^|[[:space:]])(error:|what went wrong|compilation failed|failed for task)" build.log | head -40 >> "$GITHUB_STEP_SUMMARY" || true
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tv-caster-build-log
+          path: build.log
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
