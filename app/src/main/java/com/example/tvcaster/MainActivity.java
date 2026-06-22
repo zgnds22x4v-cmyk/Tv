@@ -12,6 +12,16 @@ import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.VideoView;
+
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.net.URLDecoder;
 
 import androidx.media3.common.MediaItem;
 import androidx.media3.exoplayer.ExoPlayer;
@@ -22,22 +32,24 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
-import fi.iki.elonen.NanoHTTPD;
-
 public class MainActivity extends Activity {
     private static final int PORT = 8090;
-    private ExoPlayer player;
+    private VideoView videoView;
     private TextView instructions;
-    private CastServer server;
+    private ReceiverServer server;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
 
-        player = new ExoPlayer.Builder(this).build();
-        PlayerView playerView = new PlayerView(this);
-        playerView.setPlayer(player);
+        videoView = new VideoView(this);
+        videoView.setOnPreparedListener(player -> player.setOnInfoListener((mp, what, extra) -> false));
+        videoView.setOnErrorListener((mp, what, extra) -> {
+            instructions.setVisibility(TextView.VISIBLE);
+            instructions.setText(helpText() + "\n\nCould not play the supplied video URL.");
+            return true;
+        });
 
         instructions = new TextView(this);
         instructions.setTextColor(0xffffffff);
@@ -48,13 +60,12 @@ public class MainActivity extends Activity {
         instructions.setText(helpText());
 
         FrameLayout root = new FrameLayout(this);
-        root.addView(playerView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        root.addView(videoView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         root.addView(instructions, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(root);
 
-        server = new CastServer();
-        try { server.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false); }
-        catch (IOException e) { Toast.makeText(this, "Could not start receiver: " + e.getMessage(), Toast.LENGTH_LONG).show(); }
+        server = new ReceiverServer();
+        server.start();
     }
 
     private String helpText() {
@@ -73,35 +84,83 @@ public class MainActivity extends Activity {
     private void play(String url) {
         runOnUiThread(() -> {
             instructions.setVisibility(TextView.GONE);
-            player.setMediaItem(MediaItem.fromUri(Uri.parse(url)));
-            player.prepare();
-            player.play();
+            videoView.stopPlayback();
+            videoView.setVideoURI(Uri.parse(url));
+            videoView.start();
         });
     }
 
     @Override protected void onDestroy() {
-        if (server != null) server.stop();
-        player.release();
+        if (server != null) server.shutdown();
+        videoView.stopPlayback();
         super.onDestroy();
     }
 
-    private class CastServer extends NanoHTTPD {
-        CastServer() { super(PORT); }
-        @Override public Response serve(IHTTPSession session) {
-            if ("/play".equals(session.getUri())) {
-                Map<String, String> params = new HashMap<>(session.getParms());
-                if (Method.POST.equals(session.getMethod())) {
-                    try { session.parseBody(new HashMap<>()); params.putAll(session.getParms()); }
-                    catch (Exception ignored) { }
-                }
-                String url = params.get("url");
-                if (url == null || url.trim().isEmpty()) return text("Missing url parameter", Response.Status.BAD_REQUEST);
-                play(url.trim());
-                return text("Playing on TV. You can now leave the video on your iPhone.", Response.Status.OK);
+    private class ReceiverServer extends Thread {
+        private volatile boolean running = true;
+        private ServerSocket serverSocket;
+
+        ReceiverServer() { super("tv-caster-receiver"); }
+
+        @Override public void run() {
+            try {
+                serverSocket = new ServerSocket(PORT);
+                while (running) handle(serverSocket.accept());
+            } catch (IOException e) {
+                if (running) runOnUiThread(() -> Toast.makeText(MainActivity.this, "Could not start receiver: " + e.getMessage(), Toast.LENGTH_LONG).show());
             }
-            return html("<html><body><h1>TV Caster</h1><form action='/play' method='get'><input name='url' style='width:80%' placeholder='Direct video URL'><button>Play</button></form></body></html>");
         }
-        private Response text(String body, Response.Status status) { return newFixedLengthResponse(status, "text/plain", body); }
-        private Response html(String body) { byte[] bytes = body.getBytes(StandardCharsets.UTF_8); return newFixedLengthResponse(Response.Status.OK, "text/html", new java.io.ByteArrayInputStream(bytes), bytes.length); }
+
+        void shutdown() {
+            running = false;
+            try { if (serverSocket != null) serverSocket.close(); } catch (IOException ignored) { }
+        }
+
+        private void handle(Socket socket) {
+            try (Socket client = socket;
+                 BufferedReader in = new BufferedReader(new InputStreamReader(client.getInputStream(), StandardCharsets.UTF_8));
+                 BufferedWriter out = new BufferedWriter(new OutputStreamWriter(client.getOutputStream(), StandardCharsets.UTF_8))) {
+                String requestLine = in.readLine();
+                if (requestLine == null) return;
+                Map<String, String> params = parseParams(requestLine);
+                String url = params.get("url");
+                if (requestLine.startsWith("GET /play") && url != null && !url.trim().isEmpty()) {
+                    play(url.trim());
+                    respond(out, "200 OK", "text/plain", "Playing on TV. You can now leave the video on your iPhone.");
+                } else if (requestLine.startsWith("GET / ") || requestLine.startsWith("GET /?")) {
+                    respond(out, "200 OK", "text/html", "<html><body><h1>TV Caster</h1><form action='/play' method='get'><input name='url' style='width:80%' placeholder='Direct video URL'><button>Play</button></form></body></html>");
+                } else {
+                    respond(out, "400 Bad Request", "text/plain", "Send /play?url=VIDEO_URL");
+                }
+            } catch (IOException ignored) { }
+        }
+
+        private Map<String, String> parseParams(String requestLine) {
+            Map<String, String> params = new HashMap<>();
+            int queryStart = requestLine.indexOf('?');
+            int queryEnd = requestLine.indexOf(' ', queryStart);
+            if (queryStart < 0 || queryEnd < 0) return params;
+            String query = requestLine.substring(queryStart + 1, queryEnd);
+            for (String pair : query.split("&")) {
+                int equals = pair.indexOf('=');
+                if (equals > 0) params.put(decode(pair.substring(0, equals)), decode(pair.substring(equals + 1)));
+            }
+            return params;
+        }
+
+        private String decode(String value) {
+            try { return URLDecoder.decode(value, "UTF-8"); }
+            catch (Exception e) { return value; }
+        }
+
+        private void respond(BufferedWriter out, String status, String contentType, String body) throws IOException {
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            out.write("HTTP/1.1 " + status + "\r\n");
+            out.write("Content-Type: " + contentType + "; charset=utf-8\r\n");
+            out.write("Content-Length: " + bytes.length + "\r\n");
+            out.write("Connection: close\r\n\r\n");
+            out.write(body);
+            out.flush();
+        }
     }
 }
